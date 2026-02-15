@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import DateTime, Enum, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -23,44 +23,49 @@ class Tenant(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
-    api_key_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    collections: Mapped[list["Collection"]] = relationship(back_populates="tenant", cascade="all, delete-orphan")
+    api_keys: Mapped[list["ApiKey"]] = relationship(back_populates="tenant", cascade="all, delete-orphan")
+    documents: Mapped[list["Document"]] = relationship(back_populates="tenant", cascade="all, delete-orphan")
 
 
-class Collection(Base):
-    """A logical grouping of documents within a tenant (e.g., 'support_tickets', 'crm_contacts')."""
+class ApiKey(Base):
+    """API keys with scoped permissions.
 
-    __tablename__ = "collections"
+    - 'admin' keys: OEM uses to upload/manage docs.
+    - 'retrieval' keys: handed to AI SaaS tools, can only query — never see full docs.
+    """
+
+    __tablename__ = "api_keys"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), nullable=False)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text)
+    key_hash: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(255), nullable=False)
+    scope: Mapped[str] = mapped_column(String(20), nullable=False)  # "admin" or "retrieval"
+    is_active: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    tenant: Mapped["Tenant"] = relationship(back_populates="collections")
-    documents: Mapped[list["Document"]] = relationship(back_populates="collection", cascade="all, delete-orphan")
-
-    __table_args__ = (
-        Index("ix_collections_tenant_name", "tenant_id", "name", unique=True),
-    )
+    tenant: Mapped["Tenant"] = relationship(back_populates="api_keys")
 
 
 class Document(Base):
-    """A source document uploaded or synced from a connector."""
+    """An uploaded file (manual, guide, SOP) processed into chunks."""
 
     __tablename__ = "documents"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    collection_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("collections.id"), nullable=False)
-    source: Mapped[str] = mapped_column(String(500), nullable=False)  # filename, URL, connector ID
-    metadata_json: Mapped[str | None] = mapped_column(Text)  # arbitrary JSON metadata
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), nullable=False)
+    filename: Mapped[str] = mapped_column(String(500), nullable=False)
+    file_type: Mapped[str] = mapped_column(String(20), nullable=False)  # pdf, docx, txt, csv, md
+    file_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="processing")  # processing, ready, failed
+    chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    collection: Mapped["Collection"] = relationship(back_populates="documents")
+    tenant: Mapped["Tenant"] = relationship(back_populates="documents")
     chunks: Mapped[list["Chunk"]] = relationship(back_populates="document", cascade="all, delete-orphan")
 
 

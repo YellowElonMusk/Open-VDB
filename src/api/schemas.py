@@ -19,69 +19,64 @@ class TenantResponse(BaseModel):
     slug: str
     is_active: bool
     created_at: datetime
+    admin_api_key: str | None = None  # only returned on creation
+
+    model_config = {"from_attributes": True}
+
+
+# --- API Keys ---
+
+class ApiKeyCreate(BaseModel):
+    label: str = Field(..., min_length=1, max_length=255, description="Human-readable label (e.g. 'CRM Bot Key')")
+    scope: str = Field(..., pattern=r"^(admin|retrieval)$", description="'admin' for full access, 'retrieval' for read-only search")
+
+
+class ApiKeyResponse(BaseModel):
+    id: uuid.UUID
+    label: str
+    scope: str
+    created_at: datetime
     api_key: str | None = None  # only returned on creation
 
     model_config = {"from_attributes": True}
 
 
-# --- Collection ---
+# --- Documents ---
 
-class CollectionCreate(BaseModel):
-    name: str = Field(..., min_length=1, max_length=255)
-    description: str | None = None
-
-
-class CollectionResponse(BaseModel):
+class DocumentResponse(BaseModel):
     id: uuid.UUID
-    name: str
-    description: str | None
+    filename: str
+    file_type: str
+    file_size_bytes: int
+    status: str
+    chunk_count: int
     created_at: datetime
 
     model_config = {"from_attributes": True}
 
 
-# --- Document / Ingestion ---
-
-class IngestTextRequest(BaseModel):
-    """Ingest raw text into a collection."""
-    collection_id: uuid.UUID
-    source: str = Field(..., max_length=500, description="Identifier for the source (filename, URL, etc.)")
-    content: str = Field(..., min_length=1)
-    metadata: dict | None = None
+class DocumentListResponse(BaseModel):
+    documents: list[DocumentResponse]
+    total: int
 
 
-class DocumentResponse(BaseModel):
-    id: uuid.UUID
-    source: str
-    collection_id: uuid.UUID
-    chunk_count: int
-    created_at: datetime
+# --- Retrieval (for AI SaaS tools) ---
+
+class RetrieveRequest(BaseModel):
+    """What AI SaaS tools send to get relevant information."""
+    query: str = Field(..., min_length=1, description="Natural language question or search query")
+    top_k: int = Field(default=5, ge=1, le=20, description="Number of relevant snippets to return")
 
 
-# --- Query ---
-
-class QueryRequest(BaseModel):
-    collection_id: uuid.UUID
-    query: str = Field(..., min_length=1)
-    top_k: int = Field(default=5, ge=1, le=50)
-
-
-class QueryResult(BaseModel):
-    chunk_id: uuid.UUID
-    document_id: uuid.UUID
-    source: str
+class RetrievedSnippet(BaseModel):
+    """A single relevant snippet — NOT the full document, just the piece the AI tool needs."""
+    snippet_id: uuid.UUID
     content: str
-    score: float
+    source_filename: str
+    relevance_score: float
 
 
-class QueryResponse(BaseModel):
-    results: list[QueryResult]
-
-
-# --- Connector ---
-
-class ConnectorSyncRequest(BaseModel):
-    connector_type: str  # e.g. "salesforce", "hubspot", "zendesk"
-    collection_id: uuid.UUID
-    credentials: dict  # connector-specific auth
-    config: dict | None = None  # connector-specific options
+class RetrieveResponse(BaseModel):
+    """What the AI SaaS tool gets back: only the snippets it needs, nothing more."""
+    snippets: list[RetrievedSnippet]
+    query: str

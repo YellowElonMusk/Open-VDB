@@ -1,24 +1,34 @@
 # VectorDB OEM Platform
 
-Tenant-isolated vector database platform that lets OEMs instantly connect AI automation tools (CRM, customer support, etc.) without weeks of integration work.
+**Upload your manuals, guides, and SOPs — get an instant vector database.**
 
-## Architecture
+OEMs upload their documentation once. AI SaaS tools (CRM bots, support agents, automation platforms) retrieve only the specific snippets they need to function — never your full proprietary documents.
+
+## The Problem
+
+When OEMs want to try AI automation tools, they face weeks of integration work: extracting data from manuals, formatting it, setting up vector databases, managing embeddings. Meanwhile, handing full documents to AI tools exposes proprietary information the tools don't even need.
+
+## The Solution
 
 ```
-AI Tools (CRM bots, support agents, etc.)
-        │  Query API
+OEM uploads files (PDF, DOCX, TXT, CSV, MD)
+        │
         ▼
-┌─────────────────────────────────┐
-│       API Layer (FastAPI)       │
-│  Tenants │ Collections │ Query  │
-│  Ingest  │ Connectors           │
-├─────────────────────────────────┤
-│  Ingestion Pipeline             │
-│  (chunking → embedding → store) │
-├─────────────────────────────────┤
-│  PostgreSQL + pgvector          │
-│  (per-tenant namespace isolation)│
-└─────────────────────────────────┘
+┌──────────────────────────────────┐
+│  Automatic Processing Pipeline   │
+│  parse → chunk → embed → store   │
+├──────────────────────────────────┤
+│  Secure Vector Database          │
+│  (per-tenant isolation)          │
+├──────────────────────────────────┤
+│  Retrieval API                   │
+│  AI tools get ONLY relevant      │
+│  snippets, never full docs       │
+└──────────────────────────────────┘
+        │
+        ▼
+AI SaaS tools call /retrieve with a question,
+get back just the 3-5 text snippets they need
 ```
 
 ## Quick Start
@@ -32,7 +42,7 @@ docker compose up -d
 
 ## API Usage
 
-### 1. Create a tenant (OEM)
+### Step 1: Register your OEM
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/tenants \
@@ -40,73 +50,106 @@ curl -X POST http://localhost:8000/api/v1/tenants \
   -d '{"name": "Acme Corp", "slug": "acme"}'
 ```
 
-Save the `api_key` from the response — it's only shown once.
+Save the `admin_api_key` — it's shown only once.
 
-### 2. Create a collection
-
-```bash
-curl -X POST http://localhost:8000/api/v1/collections \
-  -H "X-API-Key: vdb_..." \
-  -H "Content-Type: application/json" \
-  -d '{"name": "support_tickets", "description": "Customer support ticket history"}'
-```
-
-### 3. Ingest data
+### Step 2: Upload your documents
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/ingest/text \
-  -H "X-API-Key: vdb_..." \
-  -H "Content-Type: application/json" \
-  -d '{
-    "collection_id": "...",
-    "source": "ticket-1234",
-    "content": "Customer reported login issues after password reset..."
-  }'
+# Single file
+curl -X POST http://localhost:8000/api/v1/documents/upload \
+  -H "X-API-Key: vdb_adm_..." \
+  -F "file=@service-manual.pdf"
+
+# Multiple files at once
+curl -X POST http://localhost:8000/api/v1/documents/upload/batch \
+  -H "X-API-Key: vdb_adm_..." \
+  -F "files=@manual.pdf" \
+  -F "files=@sop-guide.docx" \
+  -F "files=@faq.txt"
 ```
 
-### 4. Query (semantic search)
+That's it. The platform automatically parses, chunks, embeds, and indexes your documents.
+
+### Step 3: Create a retrieval key for your AI tool
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/query \
-  -H "X-API-Key: vdb_..." \
+curl -X POST http://localhost:8000/api/v1/tenants/keys \
+  -H "X-API-Key: vdb_adm_..." \
   -H "Content-Type: application/json" \
-  -d '{
-    "collection_id": "...",
-    "query": "password reset problems",
-    "top_k": 5
-  }'
+  -d '{"label": "CRM Bot", "scope": "retrieval"}'
 ```
 
-### 5. Sync from a connector
+Give the `vdb_ret_...` key to the AI SaaS tool. It can only search — never upload, delete, or see full documents.
+
+### Step 4: AI tool retrieves what it needs
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/connectors/sync \
-  -H "X-API-Key: vdb_..." \
+curl -X POST http://localhost:8000/api/v1/retrieve \
+  -H "X-API-Key: vdb_ret_..." \
   -H "Content-Type: application/json" \
-  -d '{
-    "connector_type": "example_crm",
-    "collection_id": "...",
-    "credentials": {"api_token": "test-token"}
-  }'
+  -d '{"query": "how to reset the hydraulic pressure valve", "top_k": 5}'
 ```
+
+Response — only the relevant snippets:
+
+```json
+{
+  "snippets": [
+    {
+      "content": "To reset the hydraulic pressure valve, first ensure the system is depressurized. Locate valve HPV-200 on the main assembly...",
+      "source_filename": "service-manual.pdf",
+      "relevance_score": 0.94
+    }
+  ],
+  "query": "how to reset the hydraulic pressure valve"
+}
+```
+
+## Two Types of API Keys
+
+| Key Type | Prefix | Can Upload | Can Delete | Can Search | Who Uses It |
+|----------|--------|-----------|-----------|-----------|-------------|
+| Admin    | `vdb_adm_` | Yes | Yes | Yes | OEM team |
+| Retrieval | `vdb_ret_` | No | No | Yes | AI SaaS tools |
+
+This separation ensures AI tools only access the minimum information they need.
+
+## Supported File Formats
+
+- **PDF** — manuals, spec sheets, technical docs
+- **DOCX** — Word documents, SOPs, procedures
+- **TXT** — plain text guides, notes
+- **CSV** — structured data (parts lists, error codes, etc.)
+- **Markdown** — documentation, knowledge bases
 
 ## Project Structure
 
 ```
 src/
-  api/          # FastAPI route handlers
-  core/         # Config, auth
-  connectors/   # Pluggable data source connectors
-  db/           # Database session management
-  ingestion/    # Chunking and embedding pipeline
-  models/       # SQLAlchemy models
+  api/
+    tenants.py    # OEM onboarding, API key management
+    upload.py     # File upload (single + batch)
+    retrieve.py   # Semantic search for AI SaaS tools
+    schemas.py    # Request/response models
+  core/
+    config.py     # Environment configuration
+    auth.py       # API key auth with admin/retrieval scoping
+  ingestion/
+    parser.py     # PDF, DOCX, TXT, CSV, MD text extraction
+    pipeline.py   # chunk → embed → store pipeline
+  models/
+    database.py   # SQLAlchemy models (Tenant, ApiKey, Document, Chunk)
+  db/
+    session.py    # Async database session
 ```
 
-## Adding a New Connector
+## How It Works Under the Hood
 
-1. Create a new file in `src/connectors/`
-2. Subclass `BaseConnector` from `src/connectors/base.py`
-3. Decorate with `@register_connector`
-4. Implement `authenticate()`, `fetch_records()`, and `connector_type`
+1. **Upload**: OEM uploads a PDF/DOCX/TXT file
+2. **Parse**: Text is extracted from the file format
+3. **Chunk**: Text is split into overlapping ~512-char chunks at sentence boundaries
+4. **Embed**: Each chunk is converted to a 1536-dim vector via OpenAI embeddings
+5. **Store**: Chunks + vectors stored in PostgreSQL with pgvector
+6. **Retrieve**: AI tool sends a natural language query → embedded → cosine similarity search → top-k chunks returned
 
-See `src/connectors/example_crm.py` for a reference implementation.
+The AI tool never sees the full document. It gets exactly the paragraphs relevant to its question.
