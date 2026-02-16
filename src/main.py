@@ -1,6 +1,7 @@
 """FastAPI application entry point."""
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from src.api import retrieve, tenants, upload
 from src.core.config import settings
@@ -13,6 +14,15 @@ app = FastAPI(
         "Upload manuals, guides, and SOPs — AI tools retrieve only the snippets they need. "
         "Deploy on your own infrastructure. Your data never leaves your network."
     ),
+)
+
+# CORS — allow the web UI and any OEM-hosted frontends to call the API
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # OEM admin endpoints

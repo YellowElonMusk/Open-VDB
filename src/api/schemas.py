@@ -41,6 +41,19 @@ class ApiKeyResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# --- Tenant Dashboard (for web UI connect flow) ---
+
+class TenantDashboard(BaseModel):
+    id: uuid.UUID
+    name: str
+    slug: str
+    is_active: bool
+    created_at: datetime
+    scope: str
+    document_count: int = 0
+    total_chunks: int = 0
+
+
 # --- Documents ---
 
 class DocumentResponse(BaseModel):

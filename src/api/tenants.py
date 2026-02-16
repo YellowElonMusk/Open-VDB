@@ -4,7 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.schemas import ApiKeyCreate, ApiKeyResponse, TenantCreate, TenantResponse
+from sqlalchemy import func
+
+from src.api.schemas import ApiKeyCreate, ApiKeyResponse, TenantCreate, TenantDashboard, TenantResponse
 from src.core.auth import (
     SCOPE_ADMIN,
     AuthResult,
@@ -13,7 +15,7 @@ from src.core.auth import (
     hash_api_key,
 )
 from src.db.session import get_db
-from src.models.database import ApiKey, Tenant
+from src.models.database import ApiKey, Document, Tenant
 
 router = APIRouter(prefix="/tenants", tags=["tenants"])
 
@@ -44,6 +46,38 @@ async def create_tenant(body: TenantCreate, db: AsyncSession = Depends(get_db)):
     resp = TenantResponse.model_validate(tenant)
     resp.admin_api_key = raw_key
     return resp
+
+
+@router.get("/me", response_model=TenantDashboard)
+async def get_current_tenant(
+    auth: AuthResult = Depends(authenticate),
+    db: AsyncSession = Depends(get_db),
+):
+    """Validate API key and return tenant info.
+
+    This is what the web UI calls when the user clicks 'Connect to Platform'.
+    Works with both admin and retrieval keys.
+    """
+    # Count documents and chunks for this tenant
+    doc_count_result = await db.execute(
+        select(func.count(Document.id)).where(Document.tenant_id == auth.tenant.id)
+    )
+    chunk_count_result = await db.execute(
+        select(func.coalesce(func.sum(Document.chunk_count), 0)).where(
+            Document.tenant_id == auth.tenant.id, Document.status == "ready"
+        )
+    )
+
+    return TenantDashboard(
+        id=auth.tenant.id,
+        name=auth.tenant.name,
+        slug=auth.tenant.slug,
+        is_active=auth.tenant.is_active,
+        created_at=auth.tenant.created_at,
+        scope=auth.scope,
+        document_count=doc_count_result.scalar() or 0,
+        total_chunks=chunk_count_result.scalar() or 0,
+    )
 
 
 @router.post("/keys", response_model=ApiKeyResponse, status_code=status.HTTP_201_CREATED)

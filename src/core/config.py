@@ -29,6 +29,11 @@ class Settings(BaseSettings):
 
     # API
     api_prefix: str = "/api/v1"
+    cors_origins: list[str] = [
+        "https://aidatabasebuilder.base44.app",
+        "http://localhost:3000",
+        "http://localhost:5173",
+    ]
 
     model_config = {"env_prefix": "VDB_", "env_file": ".env"}
 
