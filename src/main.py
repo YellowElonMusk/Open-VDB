@@ -9,8 +9,9 @@ app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
     description=(
-        "Upload manuals, guides, and SOPs — get an instant vector database. "
-        "AI SaaS tools retrieve only the snippets they need, never your full proprietary docs."
+        "Self-hosted vector database for OEMs. "
+        "Upload manuals, guides, and SOPs — AI tools retrieve only the snippets they need. "
+        "Deploy on your own infrastructure. Your data never leaves your network."
     ),
 )
 
@@ -24,4 +25,20 @@ app.include_router(retrieve.router, prefix=settings.api_prefix)
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    """Health check — used by Docker and monitoring."""
+    checks = {"api": "ok"}
+
+    # Check database connectivity
+    try:
+        from src.db.session import async_engine
+
+        async with async_engine.connect() as conn:
+            await conn.execute(
+                __import__("sqlalchemy").text("SELECT 1")
+            )
+        checks["database"] = "ok"
+    except Exception as e:
+        checks["database"] = f"error: {type(e).__name__}"
+
+    overall = "ok" if all(v == "ok" for v in checks.values()) else "degraded"
+    return {"status": overall, "checks": checks}
