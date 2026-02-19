@@ -116,3 +116,25 @@ async def list_api_keys(
         select(ApiKey).where(ApiKey.tenant_id == auth.tenant.id, ApiKey.is_active.is_(True))
     )
     return [ApiKeyResponse.model_validate(k) for k in result.scalars().all()]
+
+
+@router.delete("/keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_api_key(
+    key_id: str,
+    auth: AuthResult = Depends(authenticate),
+    db: AsyncSession = Depends(get_db),
+):
+    """Revoke an API key (admin only). The key stops working immediately."""
+    auth.require_admin()
+    result = await db.execute(
+        select(ApiKey).where(
+            ApiKey.id == key_id,
+            ApiKey.tenant_id == auth.tenant.id,
+            ApiKey.is_active.is_(True),
+        )
+    )
+    api_key = result.scalar_one_or_none()
+    if api_key is None:
+        raise HTTPException(status_code=404, detail="API key not found")
+    api_key.is_active = False
+    await db.commit()

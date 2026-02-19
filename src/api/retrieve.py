@@ -6,12 +6,13 @@ they need to function, never full manuals or proprietary documents.
 Works with both admin and retrieval API keys.
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.schemas import RetrieveRequest, RetrieveResponse, RetrievedSnippet
 from src.core.auth import AuthResult, authenticate
+from src.core.rate_limit import check_rate_limit
 from src.db.session import get_db
 from src.ingestion.pipeline import embed_texts
 from src.models.database import Chunk, Document
@@ -24,13 +25,18 @@ async def retrieve(
     body: RetrieveRequest,
     auth: AuthResult = Depends(authenticate),
     db: AsyncSession = Depends(get_db),
+    x_api_key: str = Header(...),
 ):
     """Semantic search across all of this tenant's documents.
 
     Returns only the relevant text snippets — not full documents.
     This is what AI SaaS tools (CRM bots, support agents, etc.) call
     to get the context they need without accessing proprietary docs.
+
+    Rate limited: 60 requests/minute per API key.
     """
+    await check_rate_limit(x_api_key, action="retrieve", limit=60)
+
     # Embed the query
     query_embedding = (await embed_texts([body.query]))[0]
 

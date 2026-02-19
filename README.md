@@ -77,6 +77,10 @@ curl -X POST http://localhost:8000/api/v1/documents/upload/batch \
   -F "files=@manual.pdf" \
   -F "files=@sop-guide.docx" \
   -F "files=@faq.txt"
+
+# Check processing status of a specific document
+curl http://localhost:8000/api/v1/documents/<document-id> \
+  -H "X-API-Key: vdb_adm_..."
 ```
 
 Files are automatically parsed, chunked, embedded, and indexed.
@@ -91,6 +95,13 @@ curl -X POST http://localhost:8000/api/v1/tenants/keys \
 ```
 
 Give the `vdb_ret_...` key to the AI SaaS tool. It can only search — never upload, delete, or see full documents.
+
+To revoke a key when an AI tool is decommissioned:
+
+```bash
+curl -X DELETE http://localhost:8000/api/v1/tenants/keys/<key-id> \
+  -H "X-API-Key: vdb_adm_..."
+```
 
 ### 4. AI tool retrieves what it needs
 

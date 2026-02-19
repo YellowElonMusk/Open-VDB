@@ -6,13 +6,14 @@ The platform automatically parses, chunks, embeds, and stores it.
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.schemas import DocumentListResponse, DocumentResponse
 from src.core.auth import AuthResult, authenticate
 from src.core.config import settings
+from src.core.rate_limit import check_rate_limit
 from src.db.session import get_db
 from src.ingestion.parser import SUPPORTED_EXTENSIONS
 from src.ingestion.pipeline import process_upload
@@ -26,12 +27,15 @@ async def upload_document(
     file: UploadFile = File(..., description="Manual, guide, or SOP document"),
     auth: AuthResult = Depends(authenticate),
     db: AsyncSession = Depends(get_db),
+    x_api_key: str = Header(...),
 ):
     """Upload a document. It's automatically processed into a searchable vector database.
 
     Supported formats: PDF, DOCX, TXT, CSV, Markdown.
+    Rate limited: 20 uploads/minute per API key.
     """
     auth.require_admin()
+    await check_rate_limit(x_api_key, action="upload", limit=20)
 
     # Validate file type
     ext = Path(file.filename or "").suffix.lower()
@@ -114,6 +118,25 @@ async def list_documents(
     )
     docs = [DocumentResponse.model_validate(d) for d in result.scalars().all()]
     return DocumentListResponse(documents=docs, total=len(docs))
+
+
+@router.get("/{document_id}", response_model=DocumentResponse)
+async def get_document(
+    document_id: str,
+    auth: AuthResult = Depends(authenticate),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get the status and metadata of a single document."""
+    result = await db.execute(
+        select(Document).where(
+            Document.id == document_id,
+            Document.tenant_id == auth.tenant.id,
+        )
+    )
+    doc = result.scalar_one_or_none()
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return DocumentResponse.model_validate(doc)
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
