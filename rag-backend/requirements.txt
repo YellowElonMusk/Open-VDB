@@ -1,0 +1,49 @@
+# FastAPI and Server
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.6
+
+# Vector Database
+pymilvus==2.3.5
+# Alternative: pinecone-client==3.0.0
+
+# Embeddings and NLP
+sentence-transformers==2.3.1
+transformers==4.37.0
+torch==2.1.2
+
+# Document Processing
+pypdf==4.0.1
+python-docx==1.1.0
+python-magic==0.4.27
+markdown==3.5.2
+
+# LLM Integration
+openai==1.10.0
+anthropic==0.18.1
+
+# Security and Authentication
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-dotenv==1.0.0
+cryptography==42.0.1
+
+# Database
+sqlalchemy==2.0.25
+asyncpg==0.29.0
+alembic==1.13.1
+
+# Utilities
+pydantic==2.5.3
+pydantic-settings==2.1.0
+aiofiles==23.2.1
+httpx==0.26.0
+redis==5.0.1
+
+# Monitoring and Logging
+structlog==24.1.0
+prometheus-client==0.19.0
+
+# Testing
+pytest==7.4.4
+pytest-asyncio==0.23.3
