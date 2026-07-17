@@ -1,8 +1,4 @@
-"""File upload endpoint — the main OEM workflow.
-
-Upload a PDF, DOCX, TXT, CSV, or Markdown file.
-The platform automatically parses, chunks, embeds, and stores it.
-"""
+"""Document upload endpoints."""
 
 from pathlib import Path
 
@@ -21,83 +17,79 @@ from src.models.database import Document
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 
-@router.post("/upload", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
-async def upload_document(
-    file: UploadFile = File(..., description="Manual, guide, or SOP document"),
-    auth: AuthResult = Depends(authenticate),
-    db: AsyncSession = Depends(get_db),
-):
-    """Upload a document. It's automatically processed into a searchable vector database.
+def _validate_filename(filename: str | None) -> str:
+    safe_name = Path(filename or "").name
+    extension = Path(safe_name).suffix.lower()
+    if not safe_name or extension not in SUPPORTED_EXTENSIONS:
+        supported = ", ".join(sorted(SUPPORTED_EXTENSIONS))
+        raise HTTPException(status_code=400, detail=f"Unsupported file type. Supported: {supported}")
+    return safe_name
 
-    Supported formats: PDF, DOCX, TXT, CSV, Markdown.
-    """
-    auth.require_admin()
 
-    # Validate file type
-    ext = Path(file.filename or "").suffix.lower()
-    if ext not in SUPPORTED_EXTENSIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported file type '{ext}'. Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}",
-        )
-
-    # Read file content
+async def _read_validated(file: UploadFile) -> tuple[str, bytes]:
+    filename = _validate_filename(file.filename)
     content = await file.read()
-    if len(content) > settings.max_upload_size_mb * 1024 * 1024:
+    if not content:
+        raise HTTPException(status_code=400, detail=f"{filename} is empty")
+    maximum = settings.max_upload_size_mb * 1024 * 1024
+    if len(content) > maximum:
         raise HTTPException(
             status_code=413,
-            detail=f"File too large. Maximum size: {settings.max_upload_size_mb} MB",
+            detail=f"{filename} exceeds the {settings.max_upload_size_mb} MB limit",
         )
+    return filename, content
 
-    # Create document record
+
+async def _process(
+    db: AsyncSession,
+    auth: AuthResult,
+    filename: str,
+    content: bytes,
+) -> Document:
     document = Document(
         tenant_id=auth.tenant.id,
-        filename=file.filename or "unknown",
-        file_type=ext.lstrip("."),
+        filename=filename,
+        file_type=Path(filename).suffix.lower().lstrip("."),
         file_size_bytes=len(content),
         status="processing",
     )
     db.add(document)
     await db.flush()
+    return await process_upload(db, document, content)
 
-    # Process: parse → chunk → embed → store
-    document = await process_upload(db, document, content)
 
-    return DocumentResponse.model_validate(document)
+@router.post("/upload", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
+async def upload_document(
+    file: UploadFile = File(...),
+    auth: AuthResult = Depends(authenticate),
+    db: AsyncSession = Depends(get_db),
+):
+    auth.require_admin()
+    filename, content = await _read_validated(file)
+    return DocumentResponse.model_validate(await _process(db, auth, filename, content))
 
 
 @router.post("/upload/batch", response_model=list[DocumentResponse], status_code=status.HTTP_201_CREATED)
 async def upload_documents_batch(
-    files: list[UploadFile] = File(..., description="Multiple documents to upload at once"),
+    files: list[UploadFile] = File(...),
     auth: AuthResult = Depends(authenticate),
     db: AsyncSession = Depends(get_db),
 ):
-    """Upload multiple documents at once. Each is processed independently."""
+    """Upload a validated batch. Invalid files are reported instead of silently skipped."""
     auth.require_admin()
-
-    results = []
-    for file in files:
-        ext = Path(file.filename or "").suffix.lower()
-        if ext not in SUPPORTED_EXTENSIONS:
-            continue
-
-        content = await file.read()
-        if len(content) > settings.max_upload_size_mb * 1024 * 1024:
-            continue
-
-        document = Document(
-            tenant_id=auth.tenant.id,
-            filename=file.filename or "unknown",
-            file_type=ext.lstrip("."),
-            file_size_bytes=len(content),
-            status="processing",
+    if not files:
+        raise HTTPException(status_code=400, detail="Select at least one file")
+    if len(files) > settings.max_batch_files:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Maximum {settings.max_batch_files} files per batch",
         )
-        db.add(document)
-        await db.flush()
 
-        document = await process_upload(db, document, content)
+    validated = [await _read_validated(file) for file in files]
+    results = []
+    for filename, content in validated:
+        document = await _process(db, auth, filename, content)
         results.append(DocumentResponse.model_validate(document))
-
     return results
 
 
@@ -106,14 +98,13 @@ async def list_documents(
     auth: AuthResult = Depends(authenticate),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all uploaded documents for this tenant."""
     result = await db.execute(
         select(Document)
         .where(Document.tenant_id == auth.tenant.id)
         .order_by(Document.created_at.desc())
     )
-    docs = [DocumentResponse.model_validate(d) for d in result.scalars().all()]
-    return DocumentListResponse(documents=docs, total=len(docs))
+    documents = [DocumentResponse.model_validate(item) for item in result.scalars().all()]
+    return DocumentListResponse(documents=documents, total=len(documents))
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -122,7 +113,6 @@ async def delete_document(
     auth: AuthResult = Depends(authenticate),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a document and all its chunks (admin only)."""
     auth.require_admin()
     result = await db.execute(
         select(Document).where(
@@ -130,8 +120,8 @@ async def delete_document(
             Document.tenant_id == auth.tenant.id,
         )
     )
-    doc = result.scalar_one_or_none()
-    if doc is None:
+    document = result.scalar_one_or_none()
+    if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
-    await db.delete(doc)
+    await db.delete(document)
     await db.commit()
