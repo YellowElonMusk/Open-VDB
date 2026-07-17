@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Open VDB</title>
+  <style>
+    :root { font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #172033; background: #f5f7fb; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    main { width: min(980px, calc(100% - 32px)); margin: 48px auto; }
+    h1 { margin-bottom: 8px; font-size: clamp(2rem, 5vw, 3.4rem); }
+    .lead { margin-top: 0; color: #596579; font-size: 1.08rem; }
+    .card { background: white; border: 1px solid #dfe5ef; border-radius: 18px; padding: 24px; box-shadow: 0 14px 40px rgba(31, 45, 72, .08); margin-top: 22px; }
+    #dropzone { border: 2px dashed #9aa8bc; border-radius: 16px; min-height: 230px; display: grid; place-items: center; text-align: center; padding: 32px; cursor: pointer; transition: .18s ease; }
+    #dropzone.drag { border-color: #315efb; background: #f2f5ff; transform: translateY(-2px); }
+    button { border: 0; border-radius: 10px; padding: 11px 16px; font: inherit; font-weight: 650; cursor: pointer; background: #315efb; color: white; }
+    button.secondary { background: #edf1f7; color: #24324a; }
+    input[type="text"] { width: 100%; border: 1px solid #cfd7e4; border-radius: 10px; padding: 12px 14px; font: inherit; }
+    .row { display: flex; gap: 10px; }
+    .row input { flex: 1; }
+    .muted { color: #68758a; font-size: .92rem; }
+    .status { margin-top: 15px; min-height: 24px; white-space: pre-wrap; }
+    .doc, .result { padding: 14px 0; border-top: 1px solid #e7ebf1; }
+    .doc:first-child, .result:first-child { border-top: 0; }
+    .pill { display: inline-block; border-radius: 999px; padding: 3px 8px; background: #edf1f7; font-size: .78rem; margin-left: 8px; }
+    .ready { background: #e6f7ee; color: #12663b; }
+    .failed { background: #ffe9e9; color: #9d2424; }
+    .error { color: #a52929; }
+    @media (max-width: 640px) { .row { flex-direction: column; } main { margin: 24px auto; } }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Open VDB</h1>
+  <p class="lead">Drop your manuals, FAQs, CSVs, or notes. They become searchable immediately.</p>
+
+  <section class="card">
+    <div id="dropzone" tabindex="0">
+      <div>
+        <h2>Drop files here</h2>
+        <p class="muted">PDF, DOCX, TXT, CSV, or Markdown · up to 50 MB each</p>
+        <button type="button" id="choose">Choose files</button>
+        <input id="files" type="file" multiple accept=".pdf,.docx,.txt,.csv,.md" hidden>
+      </div>
+    </div>
+    <div id="uploadStatus" class="status"></div>
+  </section>
+
+  <section class="card">
+    <h2>Search your knowledge base</h2>
+    <form id="searchForm" class="row">
+      <input id="query" type="text" placeholder="Example: How do I reset error E17?" required>
+      <button type="submit">Search</button>
+    </form>
+    <div id="results" class="status muted">Upload a document, then ask a question.</div>
+  </section>
+
+  <section class="card">
+    <div class="row" style="align-items:center; justify-content:space-between">
+      <h2 style="margin:0">Documents</h2>
+      <button type="button" class="secondary" id="refresh">Refresh</button>
+    </div>
+    <div id="documents" class="status muted">Loading…</div>
+  </section>
+</main>
+<script>
+const filesInput = document.querySelector('#files');
+const dropzone = document.querySelector('#dropzone');
+const uploadStatus = document.querySelector('#uploadStatus');
+const documents = document.querySelector('#documents');
+const results = document.querySelector('#results');
+
+const escapeHtml = value => String(value).replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
+
+async function jsonFetch(url, options = {}) {
+  const response = await fetch(url, options);
+  const payload = response.status === 204 ? null : await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.detail || `Request failed (${response.status})`);
+  return payload;
+}
+
+async function upload(fileList) {
+  const selected = [...fileList];
+  if (!selected.length) return;
+  uploadStatus.textContent = `Uploading ${selected.length} file(s)…`;
+  const data = new FormData();
+  selected.forEach(file => data.append('files', file));
+  try {
+    const uploaded = await jsonFetch('/api/v1/documents/upload/batch', { method: 'POST', body: data });
+    const failed = uploaded.filter(item => item.status !== 'ready');
+    uploadStatus.innerHTML = failed.length
+      ? `<span class="error">${failed.length} file(s) failed. Check the document list below.</span>`
+      : `Done — ${uploaded.length} file(s) indexed.`;
+    await loadDocuments();
+  } catch (error) {
+    uploadStatus.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;
+  }
+}
+
+document.querySelector('#choose').onclick = event => { event.stopPropagation(); filesInput.click(); };
+dropzone.onclick = () => filesInput.click();
+dropzone.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') filesInput.click(); };
+filesInput.onchange = () => upload(filesInput.files);
+['dragenter','dragover'].forEach(name => dropzone.addEventListener(name, event => { event.preventDefault(); dropzone.classList.add('drag'); }));
+['dragleave','drop'].forEach(name => dropzone.addEventListener(name, event => { event.preventDefault(); dropzone.classList.remove('drag'); }));
+dropzone.addEventListener('drop', event => upload(event.dataTransfer.files));
+
+async function loadDocuments() {
+  try {
+    const payload = await jsonFetch('/api/v1/documents');
+    if (!payload.documents.length) {
+      documents.textContent = 'No documents yet.';
+      return;
+    }
+    documents.innerHTML = payload.documents.map(doc => `
+      <div class="doc">
+        <strong>${escapeHtml(doc.filename)}</strong>
+        <span class="pill ${escapeHtml(doc.status)}">${escapeHtml(doc.status)}</span>
+        <div class="muted">${doc.chunk_count} chunks · ${(doc.file_size_bytes / 1024).toFixed(1)} KB</div>
+        ${doc.error_message ? `<div class="error">${escapeHtml(doc.error_message)}</div>` : ''}
+      </div>`).join('');
+  } catch (error) {
+    documents.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;
+  }
+}
+
+document.querySelector('#refresh').onclick = loadDocuments;
+document.querySelector('#searchForm').onsubmit = async event => {
+  event.preventDefault();
+  const query = document.querySelector('#query').value.trim();
+  if (!query) return;
+  results.textContent = 'Searching…';
+  try {
+    const payload = await jsonFetch('/api/v1/retrieve', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({query, top_k: 5})
+    });
+    results.innerHTML = payload.snippets.length ? payload.snippets.map(item => `
+      <div class="result">
+        <strong>${escapeHtml(item.source_filename)}</strong>
+        <span class="pill">score ${Number(item.relevance_score).toFixed(3)}</span>
+        <p>${escapeHtml(item.content)}</p>
+      </div>`).join('') : 'No matching snippets found.';
+  } catch (error) {
+    results.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;
+  }
+};
+
+loadDocuments();
+</script>
+</body>
+</html>

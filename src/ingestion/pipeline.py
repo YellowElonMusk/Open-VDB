@@ -1,11 +1,8 @@
-"""Ingestion pipeline: parse file → chunk text → embed → store.
+"""Ingestion pipeline: parse file, chunk text, embed it, and store it."""
 
-This is the core automation — OEMs upload a file and it becomes
-a queryable vector database automatically.
-"""
-
-import json
-import uuid
+import hashlib
+import math
+import re
 
 import openai
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,26 +17,21 @@ def chunk_text(
     chunk_size: int = settings.chunk_size,
     overlap: int = settings.chunk_overlap,
 ) -> list[str]:
-    """Split text into overlapping chunks.
-
-    Uses sentence-aware splitting: tries to break on sentence boundaries
-    (periods, newlines) rather than cutting mid-word.
-    """
+    """Split text into overlapping chunks, preferring sentence boundaries."""
     if not text.strip():
         return []
+    if overlap >= chunk_size:
+        raise ValueError("chunk_overlap must be smaller than chunk_size")
 
-    chunks = []
+    chunks: list[str] = []
     start = 0
     while start < len(text):
-        end = start + chunk_size
-
-        # Try to break at a sentence boundary if we're not at the end
+        end = min(start + chunk_size, len(text))
         if end < len(text):
-            # Look backwards from `end` for a good break point
-            for sep in ["\n\n", "\n", ". ", "? ", "! "]:
-                break_at = text.rfind(sep, start + chunk_size // 2, end)
+            for separator in ["\n\n", "\n", ". ", "? ", "! "]:
+                break_at = text.rfind(separator, start + chunk_size // 2, end)
                 if break_at != -1:
-                    end = break_at + len(sep)
+                    end = break_at + len(separator)
                     break
 
         chunk = text[start:end].strip()
@@ -50,12 +42,39 @@ def chunk_text(
     return chunks
 
 
+def _local_embedding(text: str) -> list[float]:
+    """Create a deterministic offline feature-hashing vector.
+
+    This is intentionally dependency-free and provides solid keyword/fuzzy retrieval.
+    Set VDB_EMBEDDING_PROVIDER=openai for stronger semantic retrieval.
+    """
+    vector = [0.0] * settings.embedding_dimensions
+    tokens = re.findall(r"[\w'-]+", text.lower(), flags=re.UNICODE)
+    for token in tokens:
+        digest = hashlib.blake2b(token.encode("utf-8"), digest_size=16).digest()
+        index = int.from_bytes(digest[:8], "big") % settings.embedding_dimensions
+        sign = 1.0 if digest[8] & 1 else -1.0
+        vector[index] += sign
+
+    magnitude = math.sqrt(sum(value * value for value in vector))
+    if magnitude:
+        vector = [value / magnitude for value in vector]
+    return vector
+
+
 async def embed_texts(texts: list[str]) -> list[list[float]]:
-    """Generate embeddings via OpenAI. Batches automatically."""
+    """Generate local or OpenAI embeddings."""
+    if settings.embedding_provider == "local":
+        return [_local_embedding(text) for text in texts]
+
+    if not settings.openai_api_key:
+        raise RuntimeError("VDB_OPENAI_API_KEY is required when using OpenAI embeddings")
+
     client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
     response = await client.embeddings.create(
         model=settings.embedding_model,
         input=texts,
+        dimensions=settings.embedding_dimensions,
     )
     return [item.embedding for item in response.data]
 
@@ -65,48 +84,40 @@ async def process_upload(
     document: Document,
     file_content: bytes,
 ) -> Document:
-    """Full pipeline: parse the file, chunk it, embed it, store chunks.
-
-    Updates the Document record with status and chunk count.
-    """
+    """Run the full parse -> chunk -> embed -> store pipeline."""
     try:
-        # 1. Parse file to plain text
         text = parse_file(document.filename, file_content)
         if not text.strip():
-            document.status = "failed"
-            document.error_message = "No text content could be extracted from the file"
-            await db.commit()
-            return document
+            raise ValueError("No text content could be extracted from the file")
 
-        # 2. Chunk the text
         chunks = chunk_text(text)
         if not chunks:
-            document.status = "failed"
-            document.error_message = "Text extraction produced no usable chunks"
-            await db.commit()
-            return document
+            raise ValueError("Text extraction produced no usable chunks")
 
-        # 3. Embed all chunks
         embeddings = await embed_texts(chunks)
+        if len(embeddings) != len(chunks):
+            raise RuntimeError("Embedding provider returned an unexpected result count")
 
-        # 4. Store chunks with embeddings
-        for i, (chunk_text_content, embedding) in enumerate(zip(chunks, embeddings)):
-            chunk = Chunk(
-                document_id=document.id,
-                chunk_index=i,
-                content=chunk_text_content,
-                embedding=embedding,
+        for index, (content, embedding) in enumerate(zip(chunks, embeddings)):
+            db.add(
+                Chunk(
+                    document_id=document.id,
+                    chunk_index=index,
+                    content=content,
+                    embedding=embedding,
+                )
             )
-            db.add(chunk)
 
-        # 5. Mark document as ready
         document.status = "ready"
         document.chunk_count = len(chunks)
+        document.error_message = None
         await db.commit()
-
-    except Exception as e:
+    except Exception as exc:
+        await db.rollback()
         document.status = "failed"
-        document.error_message = str(e)[:1000]
+        document.error_message = str(exc)[:1000]
+        db.add(document)
         await db.commit()
 
+    await db.refresh(document)
     return document

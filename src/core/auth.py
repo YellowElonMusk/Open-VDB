@@ -1,9 +1,4 @@
-"""API key authentication with scoped permissions.
-
-Two key types:
-- admin:     OEM uses to upload docs, manage settings, create retrieval keys
-- retrieval: AI SaaS tools use to query — read-only, returns only relevant chunks
-"""
+"""API-key authentication with an optional safe local desktop mode."""
 
 import hashlib
 import secrets
@@ -13,9 +8,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from src.core.config import settings
 from src.db.session import get_db
 from src.models.database import ApiKey, Tenant
-
 
 SCOPE_ADMIN = "admin"
 SCOPE_RETRIEVAL = "retrieval"
@@ -31,8 +26,6 @@ def hash_api_key(key: str) -> str:
 
 
 class AuthResult:
-    """Wraps the authenticated tenant + the scope of the key used."""
-
     def __init__(self, tenant: Tenant, scope: str):
         self.tenant = tenant
         self.scope = scope
@@ -41,7 +34,7 @@ class AuthResult:
     def is_admin(self) -> bool:
         return self.scope == SCOPE_ADMIN
 
-    def require_admin(self):
+    def require_admin(self) -> None:
         if not self.is_admin:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -49,10 +42,29 @@ class AuthResult:
             )
 
 
+async def _get_or_create_local_tenant(db: AsyncSession) -> Tenant:
+    result = await db.execute(select(Tenant).where(Tenant.slug == settings.local_tenant_slug))
+    tenant = result.scalar_one_or_none()
+    if tenant is None:
+        tenant = Tenant(name=settings.local_tenant_name, slug=settings.local_tenant_slug)
+        db.add(tenant)
+        await db.commit()
+        await db.refresh(tenant)
+    return tenant
+
+
 async def authenticate(
-    x_api_key: str = Header(..., description="API key (admin or retrieval)"),
+    x_api_key: str | None = Header(default=None, description="API key for server mode"),
     db: AsyncSession = Depends(get_db),
 ) -> AuthResult:
+    """Authenticate an API key, or use the private local workspace in local mode."""
+    if settings.local_mode and not x_api_key:
+        tenant = await _get_or_create_local_tenant(db)
+        return AuthResult(tenant=tenant, scope=SCOPE_ADMIN)
+
+    if not x_api_key:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="API key required")
+
     key_hash = hash_api_key(x_api_key)
     result = await db.execute(
         select(ApiKey)
