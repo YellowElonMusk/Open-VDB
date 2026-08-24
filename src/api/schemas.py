@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # --- Tenant ---
@@ -62,10 +62,22 @@ class DocumentResponse(BaseModel):
     file_type: str
     file_size_bytes: int
     status: str
+    output_formats: list[str] = Field(
+        default=["vector"],
+        description="Outputs generated for this document: vector, markdown, sqlite",
+    )
     chunk_count: int
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+    @field_validator("output_formats", mode="before")
+    @classmethod
+    def _split_formats(cls, v):
+        # Stored as a comma-separated string on the Document model
+        if isinstance(v, str):
+            return [f for f in v.split(",") if f]
+        return v
 
 
 class DocumentListResponse(BaseModel):
@@ -79,6 +91,15 @@ class RetrieveRequest(BaseModel):
     """What AI SaaS tools send to get relevant information."""
     query: str = Field(..., min_length=1, description="Natural language question or search query")
     top_k: int = Field(default=5, ge=1, le=20, description="Number of relevant snippets to return")
+    mode: str = Field(
+        default="semantic",
+        pattern=r"^(semantic|keyword)$",
+        description=(
+            "'semantic' uses vector similarity (documents uploaded with the vector output). "
+            "'keyword' does exact text matching — ideal for error codes and part numbers, "
+            "works for every document and needs no embeddings API"
+        ),
+    )
 
 
 class RetrievedSnippet(BaseModel):
