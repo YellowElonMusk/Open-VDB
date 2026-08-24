@@ -62,9 +62,23 @@ cp .env.example .env
 docker compose up -d
 ```
 
-The API is ready at `http://localhost:8000`. Interactive docs at `http://localhost:8000/docs`.
+Then open **`http://localhost:8000`** in your browser — the built-in web UI walks you through everything with no code: create your workspace, drag-and-drop documents, pick which outputs to build, download the generated `.md`/`.db` files, try searches, and create keys for your AI tools. API reference at `http://localhost:8000/docs`.
+
+## Web UI
+
+The UI ships with the server — no separate install, no Node, no build step, and it works air-gapped (no external fonts or scripts).
+
+- **Create a workspace** on first visit (or connect with an existing key); your admin key is shown once — save it
+- **Add documents** by drag-and-drop and choose what to build: smart search database, Markdown file, SQLite file
+- **Download** per-document exports or everything as one SQLite/Markdown file
+- **Try a search** exactly as your AI tools will see it — Smart (semantic) or Exact (error codes) mode
+- **Create retrieval keys** for AI tools — search-only, clearly explained
+
+Light and dark themes follow your system setting. Connecting with a retrieval key shows a read-only search view.
 
 ## API Usage
+
+Everything below can also be done from the web UI — the `curl` commands are for scripting and automation.
 
 ### 1. Create your OEM tenant
 
@@ -294,6 +308,10 @@ curl http://localhost:8000/health
 ## Project Structure
 
 ```
+static/
+  index.html      # Web UI (no build step — served by the API at /)
+  styles.css
+  app.js
 src/
   api/
     tenants.py    # OEM onboarding, API key management

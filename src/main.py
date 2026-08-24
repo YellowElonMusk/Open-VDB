@@ -1,9 +1,11 @@
 """FastAPI application entry point."""
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from src.api import export, retrieve, tenants, upload
 from src.core.config import settings
@@ -72,3 +74,10 @@ async def health():
 
     overall = "ok" if all(v == "ok" for v in checks.values()) else "degraded"
     return {"status": overall, "checks": checks}
+
+
+# Web UI — a static, no-build frontend served at the site root.
+# Mounted last so API routes and /health take precedence.
+_static_dir = Path(__file__).resolve().parent.parent / "static"
+if _static_dir.is_dir():
+    app.mount("/", StaticFiles(directory=_static_dir, html=True), name="ui")

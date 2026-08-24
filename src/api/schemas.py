@@ -67,6 +67,7 @@ class DocumentResponse(BaseModel):
         description="Outputs generated for this document: vector, markdown, sqlite",
     )
     chunk_count: int
+    error_message: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
