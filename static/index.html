@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Document Database Builder</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%233b5bdb'/%3E%3Cellipse cx='16' cy='10' rx='8' ry='3.4' fill='none' stroke='white' stroke-width='2'/%3E%3Cpath d='M8 10v12c0 1.9 3.6 3.4 8 3.4s8-1.5 8-3.4V10' fill='none' stroke='white' stroke-width='2'/%3E%3Cpath d='M8 16c0 1.9 3.6 3.4 8 3.4s8-1.5 8-3.4' fill='none' stroke='white' stroke-width='2'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<!-- ═══════════ Connect / onboarding screen ═══════════ -->
+<div id="view-connect" class="connect-wrap hidden">
+  <div class="connect-panel">
+    <div class="brand brand-lg">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="url(#bmg)"/><defs><linearGradient id="bmg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4c6ef5"/><stop offset="1" stop-color="#2b3f9e"/></linearGradient></defs><ellipse cx="16" cy="10" rx="8" ry="3.4" fill="none" stroke="#fff" stroke-width="2"/><path d="M8 10v12c0 1.9 3.6 3.4 8 3.4s8-1.5 8-3.4V10" fill="none" stroke="#fff" stroke-width="2"/><path d="M8 16c0 1.9 3.6 3.4 8 3.4s8-1.5 8-3.4" fill="none" stroke="#fff" stroke-width="2"/></svg>
+      <div>
+        <h1>Document Database Builder</h1>
+        <p class="muted">Turn your manuals, FAQs and SOPs into databases your AI tools can use — all on your own server.</p>
+      </div>
+    </div>
+
+    <div class="tabs" role="tablist">
+      <button class="tab active" data-tab="create" role="tab">Create a workspace</button>
+      <button class="tab" data-tab="connect" role="tab">I have an API key</button>
+    </div>
+
+    <!-- Create workspace -->
+    <form id="form-create" class="tab-panel">
+      <label>Company or team name
+        <input type="text" id="create-name" placeholder="e.g. Acme Robotics" required maxlength="255" autocomplete="organization">
+      </label>
+      <label>Workspace ID <span class="muted">(letters, numbers and dashes)</span>
+        <input type="text" id="create-slug" placeholder="acme-robotics" required maxlength="100" pattern="[a-z0-9\-]+" spellcheck="false">
+      </label>
+      <button type="submit" class="btn btn-primary btn-block">Create workspace</button>
+      <p class="hint">This sets up a private workspace on this server and gives you an admin key. Nothing leaves your network.</p>
+    </form>
+
+    <!-- Connect with existing key -->
+    <form id="form-connect" class="tab-panel hidden">
+      <label>Your API key
+        <input type="password" id="connect-key" placeholder="vdb_adm_… or vdb_ret_…" required spellcheck="false" autocomplete="off">
+      </label>
+      <button type="submit" class="btn btn-primary btn-block">Connect</button>
+      <p class="hint">Use the admin key you received when the workspace was created, or a retrieval key you were given.</p>
+    </form>
+
+    <!-- New admin key reveal -->
+    <div id="key-reveal" class="tab-panel hidden">
+      <div class="callout callout-warn">
+        <strong>Save this admin key now — it is shown only once.</strong>
+        <p>Anyone with this key can manage your workspace. Store it somewhere safe (a password manager is perfect).</p>
+      </div>
+      <div class="key-box">
+        <code id="new-admin-key"></code>
+        <button class="btn btn-ghost btn-copy" data-copy-target="new-admin-key">Copy</button>
+      </div>
+      <button id="key-reveal-continue" class="btn btn-primary btn-block">I saved it — open my workspace</button>
+    </div>
+  </div>
+  <p class="connect-foot muted">Self-hosted · your documents never leave this server</p>
+</div>
+
+<!-- ═══════════ Main app ═══════════ -->
+<div id="view-app" class="hidden">
+  <header class="topbar">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="url(#bmg2)"/><defs><linearGradient id="bmg2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4c6ef5"/><stop offset="1" stop-color="#2b3f9e"/></linearGradient></defs><ellipse cx="16" cy="10" rx="8" ry="3.4" fill="none" stroke="#fff" stroke-width="2"/><path d="M8 10v12c0 1.9 3.6 3.4 8 3.4s8-1.5 8-3.4V10" fill="none" stroke="#fff" stroke-width="2"/><path d="M8 16c0 1.9 3.6 3.4 8 3.4s8-1.5 8-3.4" fill="none" stroke="#fff" stroke-width="2"/></svg>
+      <span class="brand-name">Document Database Builder</span>
+    </div>
+    <div class="topbar-right">
+      <span id="tenant-name" class="tenant-chip"></span>
+      <span id="scope-badge" class="badge"></span>
+      <button id="btn-disconnect" class="btn btn-ghost btn-sm">Disconnect</button>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- Stats -->
+    <section class="stats" id="stats-row">
+      <div class="stat"><span class="stat-num" id="stat-docs">–</span><span class="stat-label">Documents</span></div>
+      <div class="stat"><span class="stat-num" id="stat-chunks">–</span><span class="stat-label">Searchable snippets</span></div>
+      <div class="stat"><span class="stat-num" id="stat-ready">–</span><span class="stat-label">Ready to use</span></div>
+    </section>
+
+    <!-- Upload -->
+    <section class="card admin-only" id="card-upload">
+      <div class="card-head">
+        <h2>Add documents</h2>
+        <p class="muted">PDF, Word, text, CSV or Markdown — manuals, FAQs, SOPs, spec sheets.</p>
+      </div>
+
+      <div id="dropzone" class="dropzone" tabindex="0">
+        <svg viewBox="0 0 24 24" class="dz-icon" aria-hidden="true"><path d="M12 16V4m0 0-4 4m4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <p><strong>Drop files here</strong> or <button type="button" class="linklike" id="btn-browse">browse</button></p>
+        <p class="muted small">Up to 50 MB per file</p>
+        <input type="file" id="file-input" multiple accept=".pdf,.docx,.txt,.csv,.md" hidden>
+      </div>
+
+      <ul id="upload-list" class="upload-list"></ul>
+
+      <div class="outputs">
+        <p class="outputs-title">What should we build from them?</p>
+        <div class="output-options">
+          <label class="output-option">
+            <input type="checkbox" id="out-vector" checked>
+            <span class="option-body">
+              <span class="option-name">Smart search database</span>
+              <span class="option-desc">Ask questions in plain English and get the right snippets back. Needs an OpenAI key on the server.</span>
+            </span>
+          </label>
+          <label class="output-option">
+            <input type="checkbox" id="out-markdown">
+            <span class="option-body">
+              <span class="option-name">Markdown file</span>
+              <span class="option-desc">A clean text file your AI agent can read directly. Works completely offline.</span>
+            </span>
+          </label>
+          <label class="output-option">
+            <input type="checkbox" id="out-sqlite">
+            <span class="option-body">
+              <span class="option-name">SQLite database file</span>
+              <span class="option-desc">A portable database file with instant exact-match lookup — great for error codes. Works completely offline.</span>
+            </span>
+          </label>
+        </div>
+      </div>
+
+      <button id="btn-upload" class="btn btn-primary" disabled>Upload &amp; build</button>
+    </section>
+
+    <!-- Documents -->
+    <section class="card admin-only" id="card-docs">
+      <div class="card-head row-between">
+        <div>
+          <h2>Your documents</h2>
+          <p class="muted">Download the generated files, or remove documents you no longer need.</p>
+        </div>
+        <div class="btn-group">
+          <button id="btn-export-sqlite" class="btn btn-ghost btn-sm" title="One SQLite file containing every document">Download all · SQLite</button>
+          <button id="btn-export-markdown" class="btn btn-ghost btn-sm" title="All markdown exports bundled into one file">Download all · Markdown</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table id="docs-table">
+          <thead>
+            <tr><th>Document</th><th>Status</th><th>Built outputs</th><th>Size</th><th></th></tr>
+          </thead>
+          <tbody id="docs-tbody"></tbody>
+        </table>
+      </div>
+      <div id="docs-empty" class="empty hidden">
+        <p><strong>No documents yet.</strong></p>
+        <p class="muted">Drop your first manual or FAQ above and it will show up here.</p>
+      </div>
+    </section>
+
+    <!-- Search -->
+    <section class="card" id="card-search">
+      <div class="card-head">
+        <h2>Try a search</h2>
+        <p class="muted">This is exactly what your AI tools will see — only the relevant snippets, never full documents.</p>
+      </div>
+      <form id="form-search" class="search-bar">
+        <input type="search" id="search-query" placeholder='Try "how to reset the pressure valve" or an error code like E-042' required>
+        <div class="seg" role="radiogroup" aria-label="Search mode">
+          <label class="seg-opt"><input type="radio" name="mode" value="semantic" checked><span>Smart</span></label>
+          <label class="seg-opt"><input type="radio" name="mode" value="keyword"><span>Exact</span></label>
+        </div>
+        <button type="submit" class="btn btn-primary">Search</button>
+      </form>
+      <p class="hint" id="search-hint">Smart search understands meaning (needs the smart search database). Exact match finds literal text like error codes — works for every document.</p>
+      <div id="search-results" class="results"></div>
+    </section>
+
+    <!-- API keys -->
+    <section class="card admin-only" id="card-keys">
+      <div class="card-head">
+        <h2>Keys for your AI tools</h2>
+        <p class="muted">Give each AI tool its own <em>retrieval key</em>. Retrieval keys can only search — they can never upload, delete or download your documents.</p>
+      </div>
+      <form id="form-key" class="key-form">
+        <input type="text" id="key-label" placeholder="Name it, e.g. Support Chatbot" required maxlength="255">
+        <select id="key-scope">
+          <option value="retrieval" selected>Retrieval — search only (for AI tools)</option>
+          <option value="admin">Admin — full access (for your team)</option>
+        </select>
+        <button type="submit" class="btn btn-primary">Create key</button>
+      </form>
+      <div id="fresh-key" class="hidden">
+        <div class="callout callout-warn">
+          <strong>Copy this key now — it is shown only once.</strong>
+        </div>
+        <div class="key-box">
+          <code id="fresh-key-value"></code>
+          <button class="btn btn-ghost btn-copy" data-copy-target="fresh-key-value">Copy</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table id="keys-table">
+          <thead><tr><th>Name</th><th>Type</th><th>Created</th></tr></thead>
+          <tbody id="keys-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Retrieval-only notice -->
+    <section class="card hidden" id="card-retrieval-note">
+      <div class="card-head">
+        <h2>Read-only access</h2>
+        <p class="muted">You're connected with a retrieval key, so you can search but not manage documents. Ask your workspace admin for an admin key to upload documents or create keys.</p>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="foot muted">
+    Self-hosted on your infrastructure · <a href="/docs" target="_blank" rel="noopener">API reference</a>
+  </footer>
+</div>
+
+<div id="toasts" class="toasts" aria-live="polite"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>

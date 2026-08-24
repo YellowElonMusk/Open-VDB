@@ -8,7 +8,8 @@ Two key types:
 import hashlib
 import secrets
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, HTTPException, Security, status
+from fastapi.security import APIKeyHeader
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -19,6 +20,15 @@ from src.models.database import ApiKey, Tenant
 
 SCOPE_ADMIN = "admin"
 SCOPE_RETRIEVAL = "retrieval"
+
+# Declared as an OpenAPI security scheme so Swagger UI shows the Authorize
+# button and generated API clients handle authentication automatically.
+api_key_header = APIKeyHeader(
+    name="X-API-Key",
+    scheme_name="ApiKeyAuth",
+    description="Admin (vdb_adm_...) or retrieval (vdb_ret_...) API key",
+    auto_error=False,
+)
 
 
 def generate_api_key(scope: str) -> str:
@@ -50,9 +60,14 @@ class AuthResult:
 
 
 async def authenticate(
-    x_api_key: str = Header(..., description="API key (admin or retrieval)"),
+    x_api_key: str | None = Security(api_key_header),
     db: AsyncSession = Depends(get_db),
 ) -> AuthResult:
+    if not x_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing API key — pass it in the X-API-Key header",
+        )
     key_hash = hash_api_key(x_api_key)
     result = await db.execute(
         select(ApiKey)

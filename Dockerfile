@@ -15,5 +15,5 @@ USER appuser
 
 EXPOSE 8000
 
-# Run DB migrations then start the server
-CMD ["sh", "-c", "alembic upgrade head && uvicorn src.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-2}"]
+# Create/upgrade the DB schema (idempotent) then start the server
+CMD ["sh", "-c", "python -m src.db.bootstrap && uvicorn src.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-2}"]

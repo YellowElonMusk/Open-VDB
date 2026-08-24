@@ -48,23 +48,20 @@ if [ ! -f .env ]; then
 
   echo "  Generated secure database password and JWT secret."
   echo ""
-  echo -e "${YELLOW}ACTION REQUIRED: Add your OpenAI API key to .env${NC}"
-  echo "  Edit .env and set VDB_OPENAI_API_KEY=sk-..."
+  echo "  An OpenAI API key is OPTIONAL:"
+  echo "    - needed only for the 'vector' output (semantic search)"
+  echo "    - markdown / SQLite outputs + keyword search work without it"
   echo ""
-
-  # Check if the key is still placeholder
-  if grep -q "sk-your-key-here" .env; then
-    read -rp "Paste your OpenAI API key now (or press Enter to set later): " api_key
-    if [ -n "$api_key" ]; then
-      if [[ "$OSTYPE" == "darwin"* ]]; then
-        sed -i '' "s|VDB_OPENAI_API_KEY=sk-your-key-here|VDB_OPENAI_API_KEY=${api_key}|" .env
-      else
-        sed -i "s|VDB_OPENAI_API_KEY=sk-your-key-here|VDB_OPENAI_API_KEY=${api_key}|" .env
-      fi
-      echo "  API key saved."
+  read -rp "Paste your OpenAI API key (or press Enter to skip): " api_key
+  if [ -n "$api_key" ]; then
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+      sed -i '' "s|VDB_OPENAI_API_KEY=|VDB_OPENAI_API_KEY=${api_key}|" .env
     else
-      echo "  Skipped. Remember to set it in .env before uploading documents."
+      sed -i "s|VDB_OPENAI_API_KEY=|VDB_OPENAI_API_KEY=${api_key}|" .env
     fi
+    echo "  API key saved."
+  else
+    echo "  Skipped. You can set VDB_OPENAI_API_KEY in .env later to enable vector search."
   fi
 else
   echo -e "${GREEN}.env already exists — using existing configuration.${NC}"
@@ -83,17 +80,12 @@ for i in {1..30}; do
     echo -e "${GREEN}║           Platform is running!                ║${NC}"
     echo -e "${GREEN}╚══════════════════════════════════════════════╝${NC}"
     echo ""
-    echo "  API:   http://localhost:${API_PORT:-8000}"
-    echo "  Docs:  http://localhost:${API_PORT:-8000}/docs"
+    echo "  Web UI:   http://localhost:${API_PORT:-8000}"
+    echo "  API docs: http://localhost:${API_PORT:-8000}/docs"
     echo ""
-    echo "Next steps:"
-    echo "  1. Create your first OEM tenant:"
-    echo "     curl -X POST http://localhost:${API_PORT:-8000}/api/v1/tenants \\"
-    echo '       -H "Content-Type: application/json" \\'
-    echo "       -d '{\"name\": \"My Company\", \"slug\": \"my-company\"}'"
-    echo ""
-    echo "  2. Upload a document with the admin key from step 1"
-    echo "  3. Create a retrieval key and hand it to your AI tool"
+    echo "Next step: open the Web UI in your browser. It walks you through"
+    echo "creating a workspace, uploading documents, choosing what to build"
+    echo "(smart search / markdown / SQLite), and creating keys for AI tools."
     echo ""
     exit 0
   fi
