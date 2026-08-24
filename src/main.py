@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.staticfiles import StaticFiles
 
 from src.api import export, retrieve, tenants, upload
@@ -35,7 +36,29 @@ app = FastAPI(
         "Upload manuals, guides, and SOPs — AI tools retrieve only the snippets they need. "
         "Deploy on your own infrastructure. Your data never leaves your network."
     ),
+    # /docs is served below from vendored Swagger UI assets so it works
+    # air-gapped (the default loads them from a CDN). ReDoc is CDN-only,
+    # so it's disabled.
+    docs_url=None,
+    redoc_url=None,
 )
+
+
+@app.get("/docs", include_in_schema=False)
+async def swagger_docs():
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=f"{settings.app_name} — API docs",
+        swagger_js_url="/swagger/swagger-ui-bundle.js",
+        swagger_css_url="/swagger/swagger-ui.css",
+        swagger_favicon_url=(
+            "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E"
+            "%3Crect width='32' height='32' rx='7' fill='%233b5bdb'/%3E"
+            "%3Cellipse cx='16' cy='10' rx='8' ry='3.4' fill='none' stroke='white' stroke-width='2'/%3E"
+            "%3Cpath d='M8 10v12c0 1.9 3.6 3.4 8 3.4s8-1.5 8-3.4V10' fill='none' stroke='white' stroke-width='2'/%3E"
+            "%3Cpath d='M8 16c0 1.9 3.6 3.4 8 3.4s8-1.5 8-3.4' fill='none' stroke='white' stroke-width='2'/%3E%3C/svg%3E"
+        ),
+    )
 
 # CORS — allow the web UI and any OEM-hosted frontends to call the API
 app.add_middleware(

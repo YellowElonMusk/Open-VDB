@@ -31,6 +31,18 @@ MEDIA_TYPES = {
 }
 
 
+def _file_response_doc(description: str, *media_types: str) -> dict:
+    """OpenAPI documentation for a binary file download response."""
+    return {
+        200: {
+            "description": description,
+            "content": {
+                mt: {"schema": {"type": "string", "format": "binary"}} for mt in media_types
+            },
+        }
+    }
+
+
 def _file_response(filename: str, format: str, content: bytes) -> Response:
     return Response(
         content=content,
@@ -39,7 +51,15 @@ def _file_response(filename: str, format: str, content: bytes) -> Response:
     )
 
 
-@router.get("/documents/{document_id}/export/{format}")
+@router.get(
+    "/documents/{document_id}/export/{format}",
+    responses=_file_response_doc(
+        "The document's generated export file",
+        "text/markdown; charset=utf-8",
+        "application/vnd.sqlite3",
+    ),
+    response_class=Response,
+)
 async def download_document_export(
     document_id: str,
     format: str,
@@ -85,7 +105,13 @@ async def download_document_export(
     return _file_response(artifact.filename, format, artifact.content)
 
 
-@router.get("/export/sqlite")
+@router.get(
+    "/export/sqlite",
+    responses=_file_response_doc(
+        "One SQLite database file containing every ready document", "application/vnd.sqlite3"
+    ),
+    response_class=Response,
+)
 async def export_all_sqlite(
     auth: AuthResult = Depends(authenticate),
     db: AsyncSession = Depends(get_db),
@@ -128,7 +154,13 @@ async def export_all_sqlite(
     return _file_response(f"{auth.tenant.slug}-documents.db", FORMAT_SQLITE, db_bytes)
 
 
-@router.get("/export/markdown")
+@router.get(
+    "/export/markdown",
+    responses=_file_response_doc(
+        "All markdown exports bundled into a single .md file", "text/markdown; charset=utf-8"
+    ),
+    response_class=Response,
+)
 async def export_all_markdown(
     auth: AuthResult = Depends(authenticate),
     db: AsyncSession = Depends(get_db),

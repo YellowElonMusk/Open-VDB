@@ -80,6 +80,8 @@ Light and dark themes follow your system setting. Connecting with a retrieval ke
 
 Everything below can also be done from the web UI — the `curl` commands are for scripting and automation.
 
+Interactive Swagger docs live at `/docs`: click **Authorize**, paste your API key once, and try every endpoint from the browser. The full OpenAPI spec is at `/openapi.json` for Postman imports and client generation. Swagger UI is served from the app itself (no CDN), so `/docs` works air-gapped too.
+
 ### 1. Create your OEM tenant
 
 ```bash
