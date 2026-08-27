@@ -137,16 +137,18 @@ async def export_all_sqlite(
     docs_payload = []
     for doc in documents:
         chunk_rows = await db.execute(
-            select(Chunk.content)
+            select(Chunk)
             .where(Chunk.document_id == doc.id)
             .order_by(Chunk.chunk_index)
         )
+        # Pass whole rows so page/section/provenance and the fault-code
+        # table survive into the exported database.
         docs_payload.append(
             {
                 "id": doc.id,
                 "filename": doc.filename,
                 "file_type": doc.file_type,
-                "chunks": [row.content for row in chunk_rows.all()],
+                "chunks": list(chunk_rows.scalars().all()),
             }
         )
 

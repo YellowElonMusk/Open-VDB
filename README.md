@@ -71,7 +71,7 @@ The UI ships with the server — no separate install, no Node, no build step, an
 - **Create a workspace** on first visit (or connect with an existing key); your admin key is shown once — save it
 - **Add documents** by drag-and-drop and choose what to build: smart search database, Markdown file, SQLite file
 - **Download** per-document exports or everything as one SQLite/Markdown file
-- **Try a search** exactly as your AI tools will see it — Smart (semantic) or Exact (error codes) mode
+- **Try a search** exactly as your AI tools will see it — one hybrid search, with the manual, revision and page shown for every result
 - **Create retrieval keys** for AI tools — search-only, clearly explained
 
 Light and dark themes follow your system setting. Connecting with a retrieval key shows a read-only search view.
@@ -165,18 +165,17 @@ Give the `vdb_ret_...` key to the AI SaaS tool. It can only search — never upl
 ### 5. AI tool retrieves what it needs
 
 ```bash
-# Semantic search (documents uploaded with the 'vector' output)
+# Natural language — vector, full-text and exact matching all run and fuse
 curl -X POST http://localhost:8000/api/v1/retrieve \
   -H "X-API-Key: vdb_ret_..." \
   -H "Content-Type: application/json" \
   -d '{"query": "how to reset the hydraulic pressure valve", "top_k": 5}'
 
-# Keyword search — exact matching for error codes and part numbers.
-# Works for EVERY document, no embeddings or OpenAI key required.
+# An exact fault code — the same endpoint, no mode to choose.
 curl -X POST http://localhost:8000/api/v1/retrieve \
   -H "X-API-Key: vdb_ret_..." \
   -H "Content-Type: application/json" \
-  -d '{"query": "E-042", "top_k": 5, "mode": "keyword"}'
+  -d '{"query": "AF-01-3021-6-1", "top_k": 5}'
 ```
 
 Response — only the relevant snippets:
@@ -185,14 +184,21 @@ Response — only the relevant snippets:
 {
   "snippets": [
     {
-      "content": "To reset the hydraulic pressure valve, first ensure the system is depressurized. Locate valve HPV-200 on the main assembly...",
-      "source_filename": "service-manual.pdf",
-      "relevance_score": 0.94
+      "content": "6.1 FAULT CODES\nCODE | DESCRIPTION | ACTION\nCODE: AF-01-3021-6-1; DESCRIPTION: Slope is too steep; ACTION: Push robot away from slope and try again",
+      "source_filename": "R3-Vac-Manuel-Entretien-Ed.01-v0.6.pdf",
+      "relevance_score": 1.0,
+      "page": 1,
+      "section": "6.1 FAULT CODES",
+      "source_doc": "R3 Vac",
+      "revision": "Ed.01 v0.6",
+      "needs_review": true
     }
   ],
-  "query": "how to reset the hydraulic pressure valve"
+  "query": "AF-01-3021-6-1"
 }
 ```
+
+Every snippet carries the manual, revision, page and section so the agent can cite what it quotes. `needs_review` is true when sources disagreed on facts in that text — here, because an adjacent fault code states nearly the same sentence.
 
 ## Deployment Models
 
@@ -255,7 +261,8 @@ All configuration is via environment variables (prefix `VDB_` for app settings):
 | `UVICORN_WORKERS` | No | `2` | API server worker count |
 | `VDB_DEBUG` | No | `false` | Enable debug logging |
 | `VDB_EMBEDDING_MODEL` | No | `text-embedding-3-small` | OpenAI embedding model |
-| `VDB_CHUNK_SIZE` | No | `512` | Text chunk size (chars) |
+| `VDB_CHUNK_SIZE` | No | `512` | Legacy chunk size (prose now targets ~1200 chars per section) |
+| `VDB_QUALITY_GATE_ENABLED` | No | `true` | Reject documents whose extraction fails quality checks |
 | `VDB_MAX_UPLOAD_SIZE_MB` | No | `50` | Max file upload size |
 
 ## Two Types of API Keys
@@ -278,15 +285,58 @@ This separation ensures AI tools only access the minimum information they need.
 ## How It Works Under the Hood
 
 1. **Upload**: OEM uploads a PDF/DOCX/TXT file and picks the outputs (`vector`, `markdown`, `sqlite`)
-2. **Parse**: Text is extracted (with table and layout awareness for manufacturing docs)
-3. **Chunk**: Text is split into overlapping ~512-char chunks at sentence boundaries — chunks are always stored, so keyword search works for every document
-4. **Build the chosen outputs**:
-   - `vector`: each chunk is converted to a 1536-dim vector via OpenAI embeddings and stored in pgvector
-   - `markdown`: a clean `.md` export is generated and stored for download
-   - `sqlite`: a standalone `.db` export (chunks + FTS5 full-text index) is generated and stored for download
-5. **Retrieve**: AI tool sends a query → `mode=semantic` (cosine similarity over embeddings) or `mode=keyword` (exact text match, great for error codes) → top-k chunks returned. Or skip the API entirely and hand your agent the downloaded `.md`/`.db` files.
+2. **Parse**: PyMuPDF extracts text at *span* level with an explicit space guard, and `find_tables()` recovers real table structure. Each table row becomes one unit with its header bound to every value (`PROBLEM: THE ROBOT DOES NOT START; POSSIBLE CAUSE: …`). Headings are detected by font size and weight, and every unit is stamped with its section, page, source document and revision.
+3. **Quality gate**: the extraction is measured before anything is built from it — fused words, orphan pipes, blank-line padding, minimum length. A document that fails is marked `failed` with the metrics in `error_message` rather than shipped looking healthy.
+4. **Chunk**: structure-aware. A table row is one chunk, never split, always carrying its header — a fault code can never be separated from its description. Prose is packed to ~1200 characters within section boundaries with the heading prepended.
+5. **Deduplicate**: near-duplicates across a manual, its quick guide and its wallchart are collapsed by MinHash/LSH — but only when their *fact fingerprints* (every number, unit, tolerance and code) match exactly. Chunks that read alike but state different facts are all kept and flagged `needs_review`.
+6. **Build the chosen outputs**:
+   - `vector`: each surviving chunk is embedded and stored in pgvector (HNSW index)
+   - `markdown`: a `.md` export with YAML front matter, real `##` headings, GFM tables and provenance comments
+   - `sqlite`: a `.db` export with chunk metadata, an FTS5 index, and a dedicated `fault_codes` table
+7. **Retrieve**: hybrid search, always. Vector similarity, Postgres full-text search and trigram-indexed exact matching all run, and their rankings are fused with reciprocal rank fusion.
 
-The AI tool never sees the full document via the retrieval API. It gets exactly the paragraphs relevant to its question.
+The AI tool never sees the full document via the retrieval API. It gets exactly the paragraphs relevant to its question, each carrying the manual, revision, page and section to cite.
+
+### Why hybrid retrieval, and not a `mode` parameter
+
+An agent asked to choose between "semantic" and "keyword" will sometimes choose wrong, and a wrong choice returns a confident wrong answer rather than an obvious failure. So every query runs all three legs:
+
+| Leg | Finds | Index |
+|-----|-------|-------|
+| `exact` | fault codes, part numbers | GIN trigram on `content` |
+| `fts` | words, stemmed per language | GIN on a generated `tsvector` (English **and** French) |
+| `vector` | meaning | HNSW `vector_cosine_ops` |
+
+`mode` is still accepted so existing clients keep working, but it is ignored and logs a deprecation warning.
+
+### Fault codes are looked up, never inferred
+
+The generated SQLite file carries a `fault_codes(code, description, source_doc, page)` table:
+
+```sql
+SELECT description, source_doc, page FROM fault_codes WHERE code = 'AF-01-3021-6-1';
+```
+
+An exact SQL lookup returns that code or nothing. A similarity search over ~180 codes across ~70 prefix families will happily return `AF-01-3022-6-1` instead — a different fault with a different fix.
+
+## Extraction Quality
+
+Ingestion measures itself. `samples/` holds two representative manuals (English and French); `scripts/quality_report.py` runs both the current pipeline and a reproduction of the previous one over them and prints the delta:
+
+```bash
+python scripts/make_samples.py     # regenerate the sample manuals
+python scripts/quality_report.py   # before/after metrics
+```
+
+| Metric | Before | After |
+|--------|-------:|------:|
+| Fused words per 1k words | 1.77 | **0** |
+| Orphan pipe line ratio | 0.053 | **0.027** |
+| Blank line ratio | 0.149 | **0** |
+| Headings recovered | 0 | **13** |
+| Header-bound table rows | 0 | **30** |
+
+The gate is on by default. Set `VDB_QUALITY_GATE_ENABLED=false` to bypass it deliberately — never accidentally.
 
 ## Operations
 
@@ -325,12 +375,19 @@ src/
     config.py     # Environment configuration
     auth.py       # API key auth with admin/retrieval scoping
   ingestion/
-    parser.py     # PDF, DOCX, TXT, CSV, MD text extraction
-    exporters.py  # Markdown and SQLite (FTS5) export builders
-    pipeline.py   # chunk → build chosen outputs pipeline
+    parser.py       # PyMuPDF span-level extraction → structured Blocks
+    quality_gate.py # Fused words, orphan pipes, blank padding — pass/fail
+    dedup.py        # MinHash/LSH grouping + fact fingerprints
+    exporters.py    # Markdown and SQLite (FTS5 + fault_codes) builders
+    pipeline.py     # parse → assess → chunk → dedup → build outputs
   models/
     database.py   # SQLAlchemy models (Tenant, ApiKey, Document, Chunk, Artifact)
   db/
     session.py    # Async database session
-    bootstrap.py  # Idempotent schema creation (runs on startup)
+    bootstrap.py  # Runs Alembic migrations on startup (idempotent)
+alembic/versions/ # Every schema change, including the hybrid search DDL
+samples/          # Representative EN + FR manuals for quality benchmarking
+scripts/
+  make_samples.py   # Regenerate the sample manuals
+  quality_report.py # Before/after extraction metrics
 ```

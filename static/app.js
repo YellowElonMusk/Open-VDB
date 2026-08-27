@@ -405,24 +405,29 @@ $("form-search").addEventListener("submit", async (e) => {
   btn.disabled = true;
   results.innerHTML = '<p class="muted"><span class="spin"></span> Searching…</p>';
   try {
-    const mode = e.target.querySelector("input[name=mode]:checked").value;
     const data = await apiJson("/retrieve", {
       method: "POST",
-      json: { query: $("search-query").value, top_k: 5, mode },
+      json: { query: $("search-query").value, top_k: 5 },
     });
     if (!data.snippets.length) {
-      results.innerHTML = `<p class="muted">No matches. ${mode === "semantic"
-        ? "Try the <strong>Exact</strong> mode for error codes, or check that your documents were built with the smart search database."
-        : "Try different words, or the <strong>Smart</strong> mode for natural-language questions."}</p>`;
+      results.innerHTML = '<p class="muted">No matches. Try different words, or check that '
+        + "the document you're looking for finished processing.</p>";
       return;
     }
     results.innerHTML = data.snippets.map((s) => {
       const pct = Math.max(0, Math.min(100, Math.round(s.relevance_score * 100)));
+      const cite = [s.source_doc || s.source_filename, s.revision, s.page ? `p.${s.page}` : ""]
+        .filter(Boolean).join(" · ");
+      const section = s.section ? `<span class="badge gray">${esc(s.section)}</span>` : "";
+      const review = s.needs_review
+        ? '<span class="badge warn" title="Sources disagreed on facts in this text">⚠️ check sources</span>'
+        : "";
       return `<article class="snippet">
         <div class="snippet-meta">
-          <span class="snippet-src" title="${esc(s.source_filename)}">${esc(s.source_filename)}</span>
+          <span class="snippet-src" title="${esc(cite)}">${esc(cite)}</span>
           <span class="score"><span class="score-bar"><i style="width:${pct}%"></i></span>${pct}%</span>
         </div>
+        <div class="badges snippet-badges">${section}${review}</div>
         <p class="snippet-text">${esc(s.content)}</p>
       </article>`;
     }).join("");

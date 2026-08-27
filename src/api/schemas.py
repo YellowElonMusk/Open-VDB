@@ -92,23 +92,35 @@ class RetrieveRequest(BaseModel):
     """What AI SaaS tools send to get relevant information."""
     query: str = Field(..., min_length=1, description="Natural language question or search query")
     top_k: int = Field(default=5, ge=1, le=20, description="Number of relevant snippets to return")
-    mode: str = Field(
-        default="semantic",
-        pattern=r"^(semantic|keyword)$",
+    mode: str | None = Field(
+        default=None,
+        deprecated=True,
         description=(
-            "'semantic' uses vector similarity (documents uploaded with the vector output). "
-            "'keyword' does exact text matching — ideal for error codes and part numbers, "
-            "works for every document and needs no embeddings API"
+            "DEPRECATED and ignored. Retrieval is always hybrid: vector similarity, "
+            "full-text search and exact substring matching are all run and fused. "
+            "Accepted so existing clients keep working; remove it from new ones."
         ),
     )
 
 
 class RetrievedSnippet(BaseModel):
-    """A single relevant snippet — NOT the full document, just the piece the AI tool needs."""
+    """A single relevant snippet — NOT the full document, just the piece the AI tool needs.
+
+    Carries enough provenance for the calling agent to cite the manual,
+    revision and page it is quoting.
+    """
     snippet_id: uuid.UUID
     content: str
     source_filename: str
     relevance_score: float
+    page: int | None = None
+    section: str | None = None
+    source_doc: str | None = None
+    revision: str | None = None
+    needs_review: bool = Field(
+        default=False,
+        description="True when sources disagreed on facts in this text — cite with care",
+    )
 
 
 class RetrieveResponse(BaseModel):

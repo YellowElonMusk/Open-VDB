@@ -223,6 +223,8 @@ td .btn { margin: 0 .12rem; }
 }
 .badge.admin { background: var(--warn-soft); color: var(--warn); }
 .badge.gray { background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border); }
+.badge.warn { background: var(--warn-soft); color: var(--warn); }
+.snippet-badges:not(:empty) { margin-bottom: .45rem; }
 .badges { display: flex; gap: .3rem; flex-wrap: wrap; }
 
 .status { display: inline-flex; align-items: center; gap: .4rem; font-weight: 600; font-size: .85rem; }

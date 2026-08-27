@@ -1,8 +1,9 @@
 """Idempotent database bootstrap — makes deployment one command.
 
-Creates the pgvector extension, all tables, and applies the small set of
-in-place upgrades needed when moving between releases. Safe to run on
-every startup: everything here is a no-op if already applied.
+Schema changes live in Alembic migrations; this module just runs them.
+Creating tables from model metadata at startup is how the ivfflat index
+ended up being built on an empty table, and it silently skips any DDL that
+metadata cannot express (generated columns, HNSW, trigram indexes).
 
 Run standalone (the Docker container does this before starting the API):
 
@@ -10,31 +11,40 @@ Run standalone (the Docker container does this before starting the API):
 """
 
 import asyncio
+from pathlib import Path
 
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from src.core.config import settings
-from src.models.database import Base
 
-# In-place upgrades for databases created by earlier releases.
-# Each statement must be idempotent.
-UPGRADE_STATEMENTS = [
-    # Embeddings became optional when markdown/sqlite outputs were added
-    "ALTER TABLE chunks ALTER COLUMN embedding DROP NOT NULL",
-    # Output format choice per document (existing docs were all vector)
-    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS "
-    "output_formats VARCHAR(100) NOT NULL DEFAULT 'vector'",
-]
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def alembic_config() -> Config:
+    config = Config(str(PROJECT_ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(PROJECT_ROOT / "alembic"))
+    config.set_main_option("sqlalchemy.url", settings.database_url_sync)
+    return config
+
+
+def run_migrations() -> None:
+    """Upgrade the database to the latest revision (idempotent)."""
+    command.upgrade(alembic_config(), "head")
 
 
 async def ensure_schema(engine: AsyncEngine) -> None:
-    async with engine.begin() as conn:
-        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        await conn.run_sync(Base.metadata.create_all)
-        for statement in UPGRADE_STATEMENTS:
-            await conn.execute(text(statement))
+    """Verify connectivity, then apply migrations.
+
+    Migrations run through Alembic's synchronous engine, so this only uses
+    the async engine to confirm the database is reachable first.
+    """
+    async with engine.connect() as conn:
+        await conn.execute(text("SELECT 1"))
+    await asyncio.to_thread(run_migrations)
 
 
 async def main() -> None:
@@ -43,7 +53,7 @@ async def main() -> None:
     for attempt in range(1, attempts + 1):
         try:
             await ensure_schema(engine)
-            print("Database schema is ready.")
+            print("Database schema is up to date.")
             break
         except Exception as e:
             if attempt == attempts:
