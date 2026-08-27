@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     embedding_dimensions: int = 1536
 
     # Ingestion
+    quality_gate_enabled: bool = True
     chunk_size: int = 512
     chunk_overlap: int = 64
     max_upload_size_mb: int = 50
